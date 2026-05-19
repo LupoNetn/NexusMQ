@@ -9,6 +9,7 @@ type Broker interface {
 	CreateTopic(topic string) error
 	DeleteTopic(topic string) error
 	Topics() []*Topic
+	Subscribe(topic string) (*Subscriber, error)
 }
 
 type Brk struct {
