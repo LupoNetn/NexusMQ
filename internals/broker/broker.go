@@ -17,7 +17,7 @@ func NewTopic(name string) *Topic {
 	return &Topic{
 		mu:          sync.RWMutex{},
 		name:        name,
-		subscribers: make(map[string]*Subscriber),
+		subscribers: make(map[string]*subscription),
 	}
 }
 
@@ -64,7 +64,7 @@ func (b *Brk) Topics() []*Topic {
 	return topics
 }
 
-func (b *Brk) Subscribe(topicName string) (*Subscriber, error) {
+func (b *Brk) Subscribe(topicName string) (Subscriber, error) {
 	b.mu.RLock()
 	topic, ok := b.topics[topicName]
 	b.mu.RUnlock()
@@ -74,7 +74,7 @@ func (b *Brk) Subscribe(topicName string) (*Subscriber, error) {
 	}
 
 	subID := fmt.Sprintf("sub-%d", time.Now().UnixNano())
-	sub := &Subscriber{
+	sub := &subscription{
 		ID: subID,
 		Ch: make(chan *Message, 100),
 	}
@@ -128,7 +128,7 @@ func (b *Brk) Publish(topicName string, msg *Message) error {
 
 	for _,sub := range topic.subscribers {
 		wg.Add(1)
-		go func(s *Subscriber){
+		go func(s *subscription){
 			defer wg.Done()
 			select {
 			case s.Ch <- msg:
@@ -172,3 +172,10 @@ func (b *Brk) Shutdown() error {
 	return nil
 }
 
+func (s *subscription) Receive() (*Message, error) {
+	msg, ok := <-s.Ch
+	if !ok {
+		return nil, fmt.Errorf("subscription closed")
+	}
+	return msg, nil
+}
