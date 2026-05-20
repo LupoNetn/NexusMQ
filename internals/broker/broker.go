@@ -153,3 +153,22 @@ func (b *Brk) Publish(topicName string, msg *Message) error {
 	return nil
 }
 
+
+func (b *Brk) Shutdown() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, topic := range b.topics {
+		topic.mu.Lock()
+		for _, sub := range topic.subscribers {
+			close(sub.Ch)
+			delete(topic.subscribers, sub.ID)
+		}
+		topic.mu.Unlock()
+	}
+
+	b.topics = make(map[string]*Topic)
+
+	return nil
+}
+

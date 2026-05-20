@@ -12,6 +12,7 @@ type Broker interface {
 	Subscribe(topic string) (*Subscriber, error)
 	Unsubscribe(topicName string, subID string) error
 	Publish(topic string, message *Message) error
+	Shutdown() error
 }
 
 type Brk struct {
