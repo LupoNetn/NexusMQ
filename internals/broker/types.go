@@ -10,6 +10,7 @@ type Broker interface {
 	DeleteTopic(topic string) error
 	Topics() []*Topic
 	Subscribe(topic string) (*Subscriber, error)
+	Unsubscribe(topicName string, subID string) error
 	Publish(topic string, message *Message) error
 }
 

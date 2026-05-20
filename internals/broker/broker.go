@@ -36,7 +36,17 @@ func (b *Brk) DeleteTopic(topic string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if _, ok := b.topics[topic]; ok {
+	t, ok := b.topics[topic]
+	if ok {
+		// Lock the topic before modifying its subscribers
+		t.mu.Lock()
+		for _, sub := range t.subscribers {
+			close(sub.Ch)
+		}
+		// We don't need to delete them from the map individually because 
+		// the entire topic map is about to be garbage collected!
+		t.mu.Unlock()
+
 		delete(b.topics, topic)
 		return nil
 	}
@@ -76,6 +86,30 @@ func (b *Brk) Subscribe(topicName string) (*Subscriber, error) {
 	return sub, nil
 }
 
+func (b *Brk) Unsubscribe(topicName string, subID string) error {
+	b.mu.RLock()
+	topic, ok := b.topics[topicName]
+	b.mu.RUnlock()
+
+	if !ok {
+		return ErrTopicNotFound
+	}
+
+	topic.mu.Lock()
+	defer topic.mu.Unlock()
+
+	// Find the subscriber
+	sub, exists := topic.subscribers[subID]
+	if !exists {
+		return nil // Already unsubscribed or doesn't exist
+	}
+
+	// Close the channel safely and remove from the map
+	close(sub.Ch)
+	delete(topic.subscribers, subID)
+
+	return nil
+}
 
 func (b *Brk) Publish(topicName string, msg *Message) error {
 	b.mu.RLock()
