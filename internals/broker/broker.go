@@ -9,6 +9,7 @@ import (
 func NewBroker() Broker {
 	return &Brk{
 		mu:     sync.RWMutex{},
+		once:   sync.Once{},
 		topics: make(map[string]*Topic),
 	}
 }
@@ -161,23 +162,21 @@ func (b *Brk) Publish(topicName string, msg *Message) error {
 }
 
 func (b *Brk) Shutdown() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.once.Do(func() {
+		b.mu.Lock()
+		b.shutdown = true
 
-	if b.shutdown {
-		return nil
-	}
-	b.shutdown = true
-
-	for _, topic := range b.topics {
-		topic.mu.Lock()
-		for _, sub := range topic.subscribers {
-			close(sub.Ch)
+		for _, topic := range b.topics {
+			topic.mu.Lock()
+			for _, sub := range topic.subscribers {
+				close(sub.Ch)
+			}
+			topic.mu.Unlock()
 		}
-		topic.mu.Unlock()
-	}
 
-	b.topics = make(map[string]*Topic)
+		b.topics = make(map[string]*Topic)
+		b.mu.Unlock()
+	})
 
 	return nil
 }
