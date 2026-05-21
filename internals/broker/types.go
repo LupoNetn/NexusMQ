@@ -16,8 +16,9 @@ type Broker interface {
 }
 
 type Brk struct {
-	mu     sync.RWMutex
-	topics map[string]*Topic
+	mu       sync.RWMutex
+	topics   map[string]*Topic
+	shutdown bool
 }
 
 type Topic struct {

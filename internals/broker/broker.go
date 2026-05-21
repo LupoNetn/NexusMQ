@@ -24,6 +24,11 @@ func NewTopic(name string) *Topic {
 func (b *Brk) CreateTopic(topic string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.shutdown {
+		return ErrBrokerShutdown
+	}
+
 	if _, ok := b.topics[topic]; ok {
 		return ErrTopicAlreadyExists
 	}
@@ -36,15 +41,16 @@ func (b *Brk) DeleteTopic(topic string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.shutdown {
+		return ErrBrokerShutdown
+	}
+
 	t, ok := b.topics[topic]
 	if ok {
-		// Lock the topic before modifying its subscribers
 		t.mu.Lock()
 		for _, sub := range t.subscribers {
 			close(sub.Ch)
 		}
-		// We don't need to delete them from the map individually because 
-		// the entire topic map is about to be garbage collected!
 		t.mu.Unlock()
 
 		delete(b.topics, topic)
@@ -54,8 +60,8 @@ func (b *Brk) DeleteTopic(topic string) error {
 }
 
 func (b *Brk) Topics() []*Topic {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 
 	var topics []*Topic
 	for _, topic := range b.topics {
@@ -66,6 +72,10 @@ func (b *Brk) Topics() []*Topic {
 
 func (b *Brk) Subscribe(topicName string) (Subscriber, error) {
 	b.mu.RLock()
+	if b.shutdown {
+		b.mu.RUnlock()
+		return nil, ErrBrokerShutdown
+	}
 	topic, ok := b.topics[topicName]
 	b.mu.RUnlock()
 
@@ -88,6 +98,10 @@ func (b *Brk) Subscribe(topicName string) (Subscriber, error) {
 
 func (b *Brk) Unsubscribe(topicName string, subID string) error {
 	b.mu.RLock()
+	if b.shutdown {
+		b.mu.RUnlock()
+		return ErrBrokerShutdown
+	}
 	topic, ok := b.topics[topicName]
 	b.mu.RUnlock()
 
@@ -98,13 +112,11 @@ func (b *Brk) Unsubscribe(topicName string, subID string) error {
 	topic.mu.Lock()
 	defer topic.mu.Unlock()
 
-	// Find the subscriber
 	sub, exists := topic.subscribers[subID]
 	if !exists {
-		return nil // Already unsubscribed or doesn't exist
+		return nil 
 	}
 
-	// Close the channel safely and remove from the map
 	close(sub.Ch)
 	delete(topic.subscribers, subID)
 
@@ -113,8 +125,12 @@ func (b *Brk) Unsubscribe(topicName string, subID string) error {
 
 func (b *Brk) Publish(topicName string, msg *Message) error {
 	b.mu.RLock()
+	if b.shutdown {
+		b.mu.RUnlock()
+		return ErrBrokerShutdown
+	}
 	topic, ok := b.topics[topicName]
-    b.mu.RUnlock()
+	b.mu.RUnlock()
 
 	if !ok {
 		return ErrTopicNotFound
@@ -123,46 +139,40 @@ func (b *Brk) Publish(topicName string, msg *Message) error {
 	topic.mu.RLock()
 	defer topic.mu.RUnlock()
 
-	errCh := make(chan error, len(topic.subscribers))
-	var wg sync.WaitGroup
+	var overflowErr error
 
-	for _,sub := range topic.subscribers {
-		wg.Add(1)
-		go func(s *subscription){
-			defer wg.Done()
-			select {
-			case s.Ch <- msg:
-				return
-			case <-time.After(1*time.Second):
-				fmt.Printf("Subscriber %s timed out\n", s.ID)
-				errCh <- fmt.Errorf("%w: %s", ErrPublishTimeout, s.ID)
-				return
+	for _, sub := range topic.subscribers {
+		select {
+		case sub.Ch <- msg:
+			// successfully delivered
+		default:
+			// Capture the first overflow error, but continue to try other subscribers
+			if overflowErr == nil {
+				overflowErr = &OverflowError{
+					SubscriberID: sub.ID,
+					Topic:        topicName,
+					DroppedCount: 1,
+				}
 			}
-		}(sub)
+		}
 	}
 
-	// Wait for all publishes to either succeed or timeout
-	wg.Wait()
-	close(errCh)
-
-	// If there were any errors, return the first one we find
-	for err := range errCh {
-		return err
-	}
-
-	return nil
+	return overflowErr
 }
-
 
 func (b *Brk) Shutdown() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.shutdown {
+		return nil
+	}
+	b.shutdown = true
+
 	for _, topic := range b.topics {
 		topic.mu.Lock()
 		for _, sub := range topic.subscribers {
 			close(sub.Ch)
-			delete(topic.subscribers, sub.ID)
 		}
 		topic.mu.Unlock()
 	}
