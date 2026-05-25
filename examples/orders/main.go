@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/luponetn/nexusmq/internals/broker"
+	"github.com/luponetn/nexusmq/pkg/broker"
 )
 
 func main() {
